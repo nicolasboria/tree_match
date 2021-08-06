@@ -70,6 +70,48 @@ def create_LM_graph(G1,G2):
         for v2 in range(G2.order()):
             LMG.add_edge(v1,indices_G2[v2],weight=edge_weight(G1,v1,G2,v2))
     return LMG
+
+def intersection(lst1, lst2):
+    lst3 = [value for value in lst1 if value in lst2]
+    return lst3
+
+def complete_Sols(G1,G2,Sols):
+    indices_G1=list(range(G1.order()))
+    indices_G2=list(range(G1.order(),G1.order()+G2.order()))
+    for s,Sol in enumerate(Sols):
+        unmatched=indices_G1+indices_G2
+        matched=[]
+        for edge in Sol:
+            matched.append(edge[0])
+            matched.append(edge[1])
+            unmatched.remove(edge[0])
+            unmatched.remove(edge[1])
+        RG=nx.Graph()
+        RG.add_nodes_from(unmatched)
+        for v1 in intersection(indices_G1,unmatched):
+            for v2 in intersection(indices_G2,unmatched):
+                if G1.nodes[v1]['lbl']!=G2.nodes[v2-G1.order()]['lbl']:
+                    edge_weight=0
+                else:
+                    edge_weight=0.000001
+                    if len(list(G1.predecessors(v1)))==len(list(G2.predecessors(v2-G1.order())))==1:
+                        f_v1=list(G1.predecessors(v1))[0]
+                        f_v2=list(G2.predecessors(v2-G1.order()))[0]
+                        if [f_v1,indices_G2[f_v2]] in Sol:
+                            edge_weight+=1
+                    matched_sons_v1=intersection(matched,G1.neighbors(v1))
+                    matched_sons_v2=intersection(matched,G2.neighbors(v2-G1.order()))
+                    for s_v1 in matched_sons_v1:
+                        for s_v2 in matched_sons_v2:
+                            if [s_v1,indices_G2[s_v2]] in Sol:
+                                edge_weight+=1
+                RG.add_edge(v1,v2,weight=edge_weight)
+        sol_add=list(nx.max_weight_matching(RG))
+        for i,match in enumerate(sol_add):
+            sol_add[i]=sorted(match)
+        Sols[s]=Sol+sol_add
+    return Sols
+        
             
 def approx_alg(G1,G2):
     LMG=create_LM_graph(G1,G2)
@@ -97,15 +139,45 @@ def approx_alg(G1,G2):
     Sols=[]
     for V in Vs:
         LMG_temp=LMG.subgraph(V)
-        Sols.append(list(nx.max_weight_matching(LMG_temp)))
+        sol=list(nx.max_weight_matching(LMG_temp))
+        for i,match in enumerate(sol):
+            sol[i]=sorted(match)
+        Sols.append(sol)
     return Sols
+
+def evaluate_sol(G1,G2,sol):
+    matched_G1=[m[0] for m in sol]
+    #print('matched_G1',matched_G1)
+    matched_G2=[m[1]-G1.order() for m in sol]
+    #print('matched_G2',matched_G2)
+    edges_G1=list(G1.edges)
+    edges_G2=list(G2.edges)
+    #print(edges_G1)
+    eval=0
+    for i in range(len(matched_G1)):
+        for j in range(len(matched_G1)):
+            if (matched_G1[i],matched_G1[j]) in edges_G1:
+                if (matched_G2[i],matched_G2[j]) in edges_G2:
+                    eval+=1
+    return eval
+            
     
         
                 
         
 graph_coll=import_graph_coll(path)    
 graph_coll=graph_coll_edit(graph_coll)
-Sols=approx_alg(graph_coll[0][0],graph_coll[4][0])
+G1=graph_coll[0][0]
+G2=graph_coll[2][0]
+Sols=approx_alg(G1,G2)
+print(Sols)
+for i,sol in enumerate(Sols):
+    print('eval',i,'=',evaluate_sol(G1,G2,sol))
+Sols=complete_Sols(G1,G2,Sols)
+#print('new',Sols)
+for i,sol in enumerate(Sols):
+    print('eval',i,'=',evaluate_sol(G1,G2,sol))
+
                 
 
 
