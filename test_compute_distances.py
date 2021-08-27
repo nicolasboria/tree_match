@@ -58,7 +58,7 @@ class Gurobi_solver:
             self._verbose=False
         self._preserved_duos_G1=[]
     
-    def compute_distance(self,G1,G2):
+    def compute_duos(self,G1,G2):
         self._preserved_duos_G1=[]
         self._sol=[]
         m=gu.Model('distance')
@@ -109,7 +109,7 @@ class Approx_alg:
         self._name='4-APPROX'
         return None
 
-    def compute_distance(self,G1,G2):
+    def compute_duos(self,G1,G2):
         self.init_match(G1,G2)
         self.complete_Sols(G1,G2)
         self._best_eval=0
@@ -119,14 +119,48 @@ class Approx_alg:
                 self._best_eval=E._evaluation
                 self._sol=sol
                 
+    def matching_solver(self,G1,G2,LMG):
+        #reindexing nodes
+        edges=list(LMG.edges())
+        weights=[]
+        for i,edge in enumerate(edges):
+            weights.append(LMG[edge[0]][edge[1]]['weight'])
+            edges[i]=sorted(edge)
+        list_indices_G1=[]
+        list_indices_G2=[]
+        for node in LMG.nodes:
+            if node < G1.order():
+                list_indices_G1.append(node)
+            else:
+                list_indices_G2.append(node)
+        m=gu.Model()
+        m.setParam('OutputFlag', 0)
+        x={}
+        for i in list_indices_G1:
+            for j in list_indices_G2:
+                x[i,j]=m.addVar()
+        m.update()
+        for i in list_indices_G1:
+            m.addConstr(gu.quicksum(x[i,j] for j in list_indices_G2)<=1)
+        for j in list_indices_G2:
+            m.addConstr(gu.quicksum(x[i,j] for i in list_indices_G1)<=1)
+
+        m.setObjective(gu.quicksum(x[e[0],e[1]]*weights[i] for i,e in enumerate(edges)), gu.GRB.MAXIMIZE)
+        m.optimize()
+        sol=[]
+        for e in edges:
+                if x[e[0],e[1]].X >= 0.9999 :
+                    sol.append([e[0],e[1]])
+        return sol
+                
             
 
     def edge_weight(self,G1,v1_id,G2,v2_id):
-        labels_G1 = nx.get_node_attributes(G1, "lbl")
-        labels_G2 = nx.get_node_attributes(G2, "lbl")
+        labels_G1 = self._labels_G1
+        labels_G2 = self._labels_G2
         if labels_G1[v1_id]!=labels_G2[v2_id]:
             return 0
-        all_attr=list(set(list(nx.get_node_attributes(G1,'lbl').values()) +list(nx.get_node_attributes(G2,'lbl').values())))
+        all_attr=self._all_attr
         num_child_by_attr_v1=np.zeros((len(all_attr)))
         num_child_by_attr_v2=np.zeros((len(all_attr)))
         for child in G1.neighbors(v1_id):
@@ -143,6 +177,9 @@ class Approx_alg:
         return score
     
     def create_LM_graph(self,G1,G2):
+        self._labels_G1 = nx.get_node_attributes(G1, "lbl")
+        self._labels_G2 = nx.get_node_attributes(G2, "lbl")
+        self._all_attr=list(set(list(nx.get_node_attributes(G1,'lbl').values()) +list(nx.get_node_attributes(G2,'lbl').values())))
         indices_G1=list(range(G1.order()))
         indices_G2=list(range(G1.order(),G1.order()+G2.order()))
         LMG=nx.Graph()
@@ -189,7 +226,8 @@ class Approx_alg:
                                 if [s_v1,indices_G2[s_v2]] in Sol:
                                     edge_weight+=1
                     RG.add_edge(v1,v2,weight=edge_weight)
-            sol_add=list(nx.max_weight_matching(RG))
+            #sol_add=list(nx.max_weight_matching(RG))
+            sol_add=self.matching_solver(G1,G2,RG)
             for i,match in enumerate(sol_add):
                 sol_add[i]=sorted(match)
             Sols[s]=Sol+sol_add
@@ -222,7 +260,8 @@ class Approx_alg:
         Sols=[]
         for V in Vs:
             LMG_temp=LMG.subgraph(V)
-            sol=list(nx.max_weight_matching(LMG_temp))
+            #sol=list(nx.max_weight_matching(LMG_temp))
+            sol=self.matching_solver(G1,G2,LMG_temp)
             for i,match in enumerate(sol):
                 sol[i]=sorted(match)
             Sols.append(sol)
@@ -257,21 +296,42 @@ def graph_coll_edit(coll):
         
                 
      
-#graph_coll=import_graph_coll(path)    
-#graph_coll=graph_coll_edit(graph_coll)
-G1=graph_coll[12][0]
-G2=graph_coll[22][0]
+graph_coll=import_graph_coll(path)    
+graph_coll=graph_coll_edit(graph_coll)
 #print(Sols)
 E=Evaluator()
 ALG=Approx_alg()
 GU=Gurobi_solver(0)
 #print('new',Sols)
 
-for dist_alg in [ALG,GU]:
-    tic=time.time()
-    dist_alg.compute_distance(G1,G2)
-    tac=time.time()
-    print(dist_alg._name,E.evaluate_sol(G1,G2,dist_alg._sol),tac-tic)
+graph_coll=[graph_coll[i] for i in range(10)]
+
+duos_matrix=np.zeros((2,len(graph_coll),len(graph_coll)))
+times_matrix=np.zeros((2,len(graph_coll),len(graph_coll)))
+
+
+
+for i in range(len(graph_coll)):
+    for j in range(len(graph_coll)):
+        duos= np.zeros((len(graph_coll[i]),len(graph_coll[j])))
+        times=np.zeros((len(graph_coll[i]),len(graph_coll[j])))
+        for alg_index,dist_alg in enumerate([ALG,GU]):
+            for ii in range(len(graph_coll[i])):
+                for jj in range(len(graph_coll[j])):
+                    G1=graph_coll[i][ii]
+                    G2=graph_coll[j][jj]
+                    tic=time.time()
+                    dist_alg.compute_duos(G1,G2)
+                    tac=time.time()
+                    duos[ii,jj]=E.evaluate_sol(G1,G2,dist_alg._sol)
+                    times[ii,jj]=tac-tic
+            max_duo=np.max(duos)
+            min_time=times[np.unravel_index(duos.argmax(),duos.shape)]
+            duos_matrix[alg_index,i,j]=max_duo
+            times_matrix[alg_index,i,j]=min_time
+        print('duo_ratio=',duos_matrix[0,i,j]/duos_matrix[1,i,j],'time ratio=',times_matrix[0,i,j]/times_matrix[1,i,j])
+print('avg duo ratio=',np.mean(duos_matrix[0]/duos_matrix[1]), 'avg time ratio=',np.mean(times_matrix[0]/times_matrix[1]))
+
     
 
 
